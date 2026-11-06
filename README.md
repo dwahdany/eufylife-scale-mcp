@@ -152,16 +152,9 @@ uv run ruff check src tests && uv run ruff format --check src tests
 
 ## Releasing
 
-Bump `version` in `pyproject.toml` and `server.json` (both places in each package entry),
-then push a matching tag:
-
-```bash
-git tag v0.1.0 && git push origin v0.1.0
-```
-
-That tag publishes to PyPI (`pypi.yml`, needs the `PYPI_API_TOKEN` secret), to
-`ghcr.io/osjayaprakash/eufylife-scale-mcp` (`docker.yml`), and then to the MCP Registry
-(`mcp-registry.yml`). Read the Docs builds the documentation from `master`.
+This fork does not publish to PyPI, ghcr.io or the MCP Registry; those workflows were removed.
+Install from Git (see above) or deploy the Worker. Pushes to `master` run CI and redeploy the
+Worker through Cloudflare Workers Builds.
 
 ## License
 
