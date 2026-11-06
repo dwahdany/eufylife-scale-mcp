@@ -17,7 +17,7 @@ session's remaining lifetime. After 30 days the client asks the user to sign in 
 
 ## Deploy your own
 
-Requirements: Node 20+, a Cloudflare account (the free Workers plan is enough: one KV namespace,
+Requirements: Node 22+, a Cloudflare account (the free Workers plan is enough: one KV namespace,
 no Durable Objects).
 
 ```bash

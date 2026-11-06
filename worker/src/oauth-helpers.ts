@@ -15,8 +15,7 @@ export const MIN_TTL_S = 60;
 const EUFY_EXPIRY_MARGIN_S = 300;
 
 // ---------------------------------------------------------------------------------------------
-// The authorization request travels through the form in one hidden field, base64url-encoded.
-// It is validated again on the way back, so a tampered or downgraded request is refused.
+// Shape every authorization request must have before this server completes it.
 
 const authRequestSchema = z.looseObject({
   responseType: z.literal("code"),
@@ -36,26 +35,6 @@ export function validateAuthRequest(value: unknown): AuthRequest | null {
   const result = authRequestSchema.safeParse(value);
   return result.success ? (result.data as AuthRequest) : null;
 }
-
-export function encodeAuthRequest(authRequest: AuthRequest): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(authRequest));
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
-}
-
-export function decodeAuthRequest(encoded: string): AuthRequest | null {
-  let parsed: unknown;
-  try {
-    const base64 = encoded.replaceAll("-", "+").replaceAll("_", "/");
-    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-    parsed = JSON.parse(new TextDecoder().decode(bytes));
-  } catch {
-    return null;
-  }
-  return validateAuthRequest(parsed);
-}
-
 
 /** Sanitise an EufyLife user id for use as the OAuth userId (which must not contain ':'). */
 export function grantUserId(eufyUserId: string): string {

@@ -42,7 +42,9 @@ code { font-size: .95em; }
 export interface SignInPageOptions {
   clientName: string;
   redirectHost: string;
-  encodedRequest: string;
+  redirectIsLoopback: boolean;
+  /** One-time consent handle from beginConsent(); posted back as `handle`. */
+  handle: string;
   email?: string;
   country?: string;
   error?: string;
@@ -51,7 +53,7 @@ export interface SignInPageOptions {
 export function renderSignInPage(options: SignInPageOptions): string {
   const clientName = escapeHtml(options.clientName);
   const redirectHost = escapeHtml(options.redirectHost);
-  const encodedRequest = escapeHtml(options.encodedRequest);
+  const handle = escapeHtml(options.handle);
   const email = escapeHtml(options.email ?? "");
   const country = escapeHtml((options.country ?? "").toUpperCase());
   const errorBanner = options.error ? `<div class="error" role="alert">${escapeHtml(options.error)}</div>` : "";
@@ -67,9 +69,10 @@ export function renderSignInPage(options: SignInPageOptions): string {
 <main>
 <h1>Connect ${clientName} to your EufyLife scale</h1>
 <p class="meta">After signing in you will be sent back to <strong>${redirectHost}</strong>.</p>
+${options.redirectIsLoopback ? '<p class="error">This sends access to an app on your computer. Continue only if you just started signing in from it.</p>' : ""}
 ${errorBanner}
 <form method="post" action="/authorize">
-<input type="hidden" name="oauth_request" value="${encodedRequest}">
+<input type="hidden" name="handle" value="${handle}">
 <label for="email">EufyLife email</label>
 <input type="email" id="email" name="email" value="${email}" autocomplete="username" required>
 <label for="password">EufyLife password</label>

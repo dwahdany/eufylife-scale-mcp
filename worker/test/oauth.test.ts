@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 import {
   ACCESS_TOKEN_TTL_S,
   REFRESH_TOKEN_TTL_S,
-  decodeAuthRequest,
-  encodeAuthRequest,
   eufyRemainingSeconds,
   grantUserId,
   tokenExchange,
@@ -23,15 +21,9 @@ const request: AuthRequest = {
   resource: "https://example.workers.dev/mcp",
 };
 
-describe("auth request round trip", () => {
-  it("encodes and decodes losslessly", () => {
-    const encoded = encodeAuthRequest(request);
-    expect(encoded).not.toMatch(/[+/=]/);
-    expect(decodeAuthRequest(encoded)).toEqual(request);
-  });
-
-  it("rejects tampered, non-PKCE and implicit requests", () => {
-    expect(decodeAuthRequest("not base64 json")).toBeNull();
+describe("validateAuthRequest", () => {
+  it("accepts a PKCE S256 code request and rejects downgrades", () => {
+    expect(validateAuthRequest(request)).toEqual(request);
     expect(validateAuthRequest({ ...request, codeChallenge: undefined })).toBeNull();
     expect(validateAuthRequest({ ...request, codeChallengeMethod: "plain" })).toBeNull();
     expect(validateAuthRequest({ ...request, responseType: "token" })).toBeNull();

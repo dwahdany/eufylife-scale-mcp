@@ -6,18 +6,22 @@
  * password, and stores the EufyLife session (token, user id, members) as the grant's encrypted
  * props. The MCP tools read it back from getMcpAuthContext().
  */
-import { OAuthProvider, type AuthRequest, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import {
+  AuthorizationError,
+  OAuthProvider,
+  type ApprovedConsent,
+  type AuthRequest,
+  type OAuthHelpers,
+} from "@cloudflare/workers-oauth-provider";
 import { createMcpHandler } from "agents/mcp/server";
 
 import { EufyError, login } from "./eufy";
-import { htmlResponse, renderErrorPage, renderSignInPage } from "./html";
+import { HTML_HEADERS, htmlResponse, renderErrorPage, renderSignInPage } from "./html";
 import { createServer, type GrantProps } from "./mcp";
 import {
   ACCESS_TOKEN_TTL_S,
   MIN_TTL_S,
   REFRESH_TOKEN_TTL_S,
-  decodeAuthRequest,
-  encodeAuthRequest,
   eufyRemainingSeconds,
   grantUserId,
   tokenExchange,
@@ -27,8 +31,6 @@ import {
 export {
   ACCESS_TOKEN_TTL_S,
   REFRESH_TOKEN_TTL_S,
-  decodeAuthRequest,
-  encodeAuthRequest,
   eufyRemainingSeconds,
   grantUserId,
   tokenExchange,
@@ -46,44 +48,65 @@ export interface Env {
   MCP_RESOURCE?: string;
 }
 
-function redirectHostOf(authRequest: AuthRequest): string {
-  try {
-    return new URL(authRequest.redirectUri).host;
-  } catch {
-    return authRequest.redirectUri;
-  }
-}
-
 function errorPage(message: string, status: number): Response {
   return htmlResponse(renderErrorPage(message), status);
 }
 
 // ---------------------------------------------------------------------------------------------
 
+type SignInPageData = { clientName: string; redirectHost: string; redirectIsLoopback: boolean };
+
+async function pageData(oauth: OAuthHelpers, authRequest: AuthRequest): Promise<SignInPageData> {
+  const details = await oauth.describeConsent(authRequest);
+  return { clientName: details.clientName, redirectHost: details.redirectHost, redirectIsLoopback: details.redirectIsLoopback };
+}
+
+function signInResponse(
+  data: SignInPageData,
+  consent: { handle: string; headers: Headers },
+  extra: { email?: string; country?: string; error?: string; status?: number } = {},
+): Response {
+  const headers = new Headers(consent.headers);
+  for (const [key, value] of Object.entries(HTML_HEADERS)) headers.set(key, value);
+  const body = renderSignInPage({
+    clientName: data.clientName,
+    redirectHost: data.redirectHost,
+    redirectIsLoopback: data.redirectIsLoopback,
+    handle: consent.handle,
+    email: extra.email,
+    country: extra.country,
+    error: extra.error,
+  });
+  return new Response(body, { status: extra.status ?? 200, headers });
+}
+
+/**
+ * GET /authorize: validate the client's request, open a consent transaction (the request is kept
+ * server-side; the form only carries a one-time handle bound to this browser by a cookie) and
+ * show the sign-in form.
+ */
 export async function handleAuthorizeGet(request: Request, oauth: OAuthHelpers): Promise<Response> {
   let parsed: AuthRequest;
   try {
     parsed = await oauth.parseAuthRequest(request);
-  } catch {
+  } catch (error) {
+    if (error instanceof AuthorizationError && error.redirectTo) return Response.redirect(error.redirectTo, 302);
     return errorPage("Invalid authorization request.", 400);
   }
-  const authRequest = validateAuthRequest(parsed);
-  if (!authRequest) {
+  if (!validateAuthRequest(parsed)) {
     return errorPage(
       "Invalid authorization request. This server requires the authorization code flow with PKCE (S256).",
       400,
     );
   }
-  const client = await oauth.lookupClient(authRequest.clientId);
-  if (!client) return errorPage("Unknown OAuth client.", 400);
-  return htmlResponse(
-    renderSignInPage({
-      clientName: client.clientName?.trim() || client.clientId,
-      redirectHost: redirectHostOf(authRequest),
-      encodedRequest: encodeAuthRequest(authRequest),
-      country: countryHint(request),
-    }),
-  );
+  let data: SignInPageData;
+  try {
+    data = await pageData(oauth, parsed); // first: a failed lookup leaves nothing in KV
+  } catch {
+    return errorPage("Unknown OAuth client.", 400);
+  }
+  const consent = await oauth.beginConsent(parsed);
+  return signInResponse(data, consent, { country: countryHint(request) });
 }
 
 /** Best guess for the account country from Cloudflare's geolocation, for the form default. */
@@ -98,6 +121,12 @@ function formString(form: FormData, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
+/**
+ * POST /authorize: redeem the consent handle (this recovers the validated authorization request
+ * from storage and checks the browser cookie), sign in to EufyLife with the submitted
+ * credentials, and complete the authorization with the resulting session as the grant's props.
+ * A failed sign-in opens a fresh transaction and shows the form again.
+ */
 export async function handleAuthorizePost(request: Request, oauth: OAuthHelpers): Promise<Response> {
   let form: FormData;
   try {
@@ -105,46 +134,46 @@ export async function handleAuthorizePost(request: Request, oauth: OAuthHelpers)
   } catch {
     return errorPage("Invalid form submission.", 400);
   }
-  const encodedRequest = formString(form, "oauth_request");
-  const authRequest = encodedRequest ? decodeAuthRequest(encodedRequest) : null;
-  if (!authRequest) return errorPage("Invalid authorization request.", 400);
-  const client = await oauth.lookupClient(authRequest.clientId);
-  if (!client) return errorPage("Unknown OAuth client.", 400);
+  const handle = formString(form, "handle");
+  if (!handle) return errorPage("Invalid form submission.", 400);
+
+  let approved: ApprovedConsent;
+  try {
+    approved = await oauth.approveConsent(request, handle);
+  } catch (error) {
+    if (error instanceof AuthorizationError) {
+      return errorPage("This sign-in page has expired or was already used. Start again from your MCP client.", 400);
+    }
+    throw error;
+  }
+  const authRequest = approved.request;
+  if (!validateAuthRequest(authRequest)) return errorPage("Invalid authorization request.", 400);
+  const data = await pageData(oauth, authRequest);
 
   const email = formString(form, "email").trim();
   const password = formString(form, "password");
   const country = formString(form, "country").trim().toUpperCase();
-  const rerender = (error: string, status: number): Response =>
-    htmlResponse(
-      renderSignInPage({
-        clientName: client.clientName?.trim() || client.clientId,
-        redirectHost: redirectHostOf(authRequest),
-        encodedRequest,
-        email,
-        country,
-        error,
-      }),
-      status,
-    );
+  const retry = async (error: string, status: number): Promise<Response> => {
+    const consent = await oauth.beginConsent(authRequest);
+    // The approval cleared the old binding cookie; the new transaction sets its own.
+    for (const value of approved.headers.getSetCookie()) consent.headers.append("Set-Cookie", value);
+    return signInResponse(data, consent, { email, country, error, status });
+  };
 
-  if (!email || !password) return rerender("Enter your EufyLife email and password.", 400);
-  if (!/^[A-Z]{2}$/.test(country)) return rerender("Country must be a two-letter code such as US or GB.", 400);
+  if (!email || !password) return retry("Enter your EufyLife email and password.", 400);
+  if (!/^[A-Z]{2}$/.test(country)) return retry("Country must be a two-letter code such as US or GB.", 400);
 
   let props: GrantProps;
   try {
     props = await login(email, password, country);
   } catch (error) {
-    if (error instanceof EufyError) {
-      switch (error.kind) {
-        case "login_rejected":
-          return rerender("EufyLife rejected this email or password. Check them and try again.", 401);
-        case "rate_limited":
-          return rerender("EufyLife is rate limiting sign-ins right now. Wait a few minutes and try again.", 429);
-        default:
-          return rerender("Could not reach EufyLife. Try again in a moment.", 502);
-      }
+    if (error instanceof EufyError && error.kind === "login_rejected") {
+      return retry("EufyLife rejected this email or password. Check them and try again.", 401);
     }
-    return rerender("Could not reach EufyLife. Try again in a moment.", 502);
+    if (error instanceof EufyError && error.kind === "rate_limited") {
+      return retry("EufyLife is rate limiting sign-ins right now. Wait a few minutes and try again.", 429);
+    }
+    return retry("Could not reach EufyLife. Try again in a moment.", 502);
   }
 
   try {
@@ -156,14 +185,15 @@ export async function handleAuthorizePost(request: Request, oauth: OAuthHelpers)
       scope: authRequest.scope,
       props,
     });
-    return new Response(null, { status: 302, headers: { Location: redirectTo, "Cache-Control": "no-store" } });
+    const headers = new Headers(approved.headers);
+    headers.set("Location", redirectTo);
+    headers.set("Cache-Control", "no-store");
+    return new Response(null, { status: 302, headers });
   } catch (error) {
     console.error({ event: "oauth.complete_authorization_failed", error: error instanceof Error ? error.name : "unknown" });
     return errorPage("Authorization could not be completed. Please try again.", 502);
   }
 }
-
-// ---------------------------------------------------------------------------------------------
 
 function unauthorized(request: Request, description: string): Response {
   const url = new URL(request.url);
