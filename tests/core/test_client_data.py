@@ -81,6 +81,16 @@ async def test_expired_token_401():
         await client.measurements()
 
 
+async def test_expired_token_in_body_is_authentication_error():
+    # Observed live: a dead token gets HTTP 200 with a 401 in the body.
+    api = MockAPI()
+    body = {"code": 3158, "res_code": 401, "message": "Access token expired."}
+    api.on("GET", DATA, json_body=body)
+    client = await logged_in(api)
+    with pytest.raises(AuthenticationError):
+        await client.measurements()
+
+
 async def test_rate_limited_data_call():
     api = MockAPI()
     api.on("GET", DATA, status=429, json_body={}, headers={"Retry-After": "12"})

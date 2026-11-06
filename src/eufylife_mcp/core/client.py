@@ -31,6 +31,8 @@ CLIENT_SECRET = "8FHf22gaTKu7MZXqz5zytw"
 
 # `res_code` on success; anything else is a failure.
 _OK = 1
+# `res_code` the data API returns (with HTTP 200) when the token is no longer valid.
+_EXPIRED = 401
 # Log in again this long before the token's stated expiry.
 _EXPIRY_MARGIN_S = 300
 _DEFAULT_EXPIRES_IN_S = 30 * 24 * 3600
@@ -134,6 +136,10 @@ class EufyLifeClient:
         response = await self._send("GET", DATA_URL, params=params, headers=headers)
         body = _json_object(response, "measurements")
         code = body.get("res_code")
+        if code == _EXPIRED:
+            # The API answers HTTP 200 with res_code 401 ("Access token expired.") once the
+            # token dies; treat it like an HTTP 401 so the caller logs in again.
+            raise AuthenticationError("EufyLife session token expired")
         if code != _OK:
             raise APIError(code if isinstance(code, int) else 0)
         records = body.get("data")
