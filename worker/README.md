@@ -35,6 +35,20 @@ instructions.
 To serve on a custom domain, add a route in `wrangler.jsonc` and set `MCP_RESOURCE` to the
 exact `https://your-domain/mcp` URL (tokens are bound to it).
 
+### Deploy on every push (Workers Builds)
+
+Connect the repository under Workers → your worker → Settings → Build and set:
+
+| Setting | Value |
+| --- | --- |
+| Production branch | `master` |
+| Root directory | `worker/` |
+| Build command | *(none; the lockfile is installed automatically)* |
+| Deploy command | `npx wrangler deploy` |
+| Include paths | `worker/**` (skip builds for Python-only commits) |
+
+The build uses a scoped API token that Cloudflare creates for you, so no secret lives in GitHub.
+
 ## Connect
 
 - **Claude (claude.ai / Desktop / mobile):** Customize → Connectors → Add custom connector →
