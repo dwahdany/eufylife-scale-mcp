@@ -81,6 +81,13 @@ docker run -i --rm \
 In a client config, use `"command": "docker"` with those arguments, and pass the
 variables through the client's `env` block.
 
+### Remote server / Claude connector
+
+The `worker/` directory holds a Cloudflare Workers version with OAuth sign-in, for use as a
+custom connector in Claude (web, desktop, mobile and Claude Code) without installing anything
+locally. Users sign in with their EufyLife account on a page served by the Worker; only the
+resulting session token is stored, encrypted. See [worker/README.md](worker/README.md).
+
 ### Claude Desktop
 
 Add to `claude_desktop_config.json`:

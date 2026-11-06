@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "eufylife-scale-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  // nodejs_compat: the MCP handler keeps per-request auth context in AsyncLocalStorage.
+  // global_fetch_strictly_public: required to accept OAuth Client ID Metadata Documents
+  // (the "Use Claude's published identity" option in Claude's connector dialog).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": { "enabled": true },
+  // OAuth grants and tokens live here. Create it with:
+  //   npx wrangler kv namespace create OAUTH_KV
+  // and paste the id below. Grant props (the EufyLife session token) are encrypted with a key
+  // only the holder of the matching OAuth token can unwrap, so the namespace holds no usable
+  // credentials on its own.
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "3a9db758419c43079f275ee8e11f3dd8" }],
+  "vars": {
+    // Optional. The exact URL MCP clients connect to, e.g. "https://mcp.example.com/mcp".
+    // Leave empty to derive it from the request origin (fine for *.workers.dev).
+    "MCP_RESOURCE": ""
+  }
+}
