@@ -27,6 +27,8 @@ when Eufy changes the app's API.
 
 The measurement tools take an optional `member`: a name (`"Ann"`) or a `member_id` from
 `list_members`. When omitted, the account owner (the default member) is used.
+Profiles added, renamed or removed in the EufyLife app show up in `list_members` within
+five minutes; asking for a new member by name finds them right away.
 
 Measurements include `timestamp_utc`, `weight_kg`, `weight_lb`, and whatever body
 composition the scale measured: `bmi`, `body_fat_pct`, `body_fat_mass_kg`,

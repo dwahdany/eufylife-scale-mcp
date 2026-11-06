@@ -24,6 +24,12 @@ from eufylife_mcp.core import (
 
 T = TypeVar("T")
 
+# `list_members` logs in again to refresh its answer once the cached list is this old.
+# Members only come with the login response, and the Desktop client keeps this
+# process alive for days, so without this a profile added or removed in the app
+# would never show up.
+MEMBER_LIST_MAX_AGE = timedelta(minutes=5)
+
 
 class EufyClient(Protocol):
     """The subset of core.client.EufyLifeClient that ScaleService uses."""
@@ -109,9 +115,14 @@ class ScaleService:
         self._members_lock = asyncio.Lock()
         self._authenticated = False
         self._members: list[Member] | None = None
+        self._members_fetched_at: datetime | None = None
 
     async def list_members(self) -> list[Member]:
-        return await self._member_list(refresh=False)
+        return await self._member_list(refresh=self._members_stale())
+
+    def _members_stale(self) -> bool:
+        fetched_at = self._members_fetched_at
+        return fetched_at is not None and self._clock() - fetched_at >= MEMBER_LIST_MAX_AGE
 
     async def latest(self, member: str | None) -> tuple[Member, Measurement]:
         resolved = await self._resolve(member)
@@ -142,6 +153,7 @@ class ScaleService:
                     async with self._mapped_errors("authenticate", None):
                         await self._authenticate(force=True)
                 self._members = await self._request("get_members", self._client.get_members)
+                self._members_fetched_at = self._clock()
             return self._members
 
     async def _authenticate(self, *, force: bool) -> None:
@@ -151,6 +163,10 @@ class ScaleService:
             self._authenticated = False
             await self._client.authenticate()
             self._authenticated = True
+            if force:
+                # The login response carries the current member list; drop ours so the
+                # next lookup re-reads it from the client.
+                self._members = None
 
     async def _request(
         self,
